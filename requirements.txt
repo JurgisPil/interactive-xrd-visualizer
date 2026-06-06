@@ -1,0 +1,5 @@
+pymatgen
+PyQt6
+pyqtgraph
+numpy
+scipy
