@@ -7,7 +7,7 @@ import pyqtgraph as pg
 from xrd_model import XRDModel
 
 class CalcThread(QThread):
-    result_ready = pyqtSignal(object, object)
+    result_ready = pyqtSignal(object, object, object)
     
     def __init__(self, model):
         super().__init__()
@@ -15,8 +15,8 @@ class CalcThread(QThread):
         
     def run(self):
         try:
-            x, y = self.model.calculate_pattern()
-            self.result_ready.emit(x, y)
+            x, y, peaks = self.model.calculate_pattern()
+            self.result_ready.emit(x, y, peaks)
         except Exception as e:
             print(f"Error calculating pattern in thread: {e}")
 
@@ -49,7 +49,10 @@ class XRDGui(QWidget):
         self.plot_widget.setLabel('left', 'Intensity (a.u.)')
         self.plot_widget.setLabel('bottom', '2 Theta (degrees)')
         self.plot_widget.showGrid(x=True, y=True)
+        self.plot_widget.getViewBox().setMouseMode(pg.ViewBox.RectMode)
         self.plot_curve = self.plot_widget.plot(pen=pg.mkPen('cyan', width=2), antialias=False)
+        self.sticks = self.plot_widget.plot(x=[], y=[], pen=pg.mkPen('r', width=1))
+        self.text_items = []
         
         main_layout.addWidget(self.plot_widget, stretch=7)
         
@@ -151,6 +154,11 @@ class XRDGui(QWidget):
         self.aa_btn.setCheckable(True)
         self.aa_btn.clicked.connect(self.toggle_aa)
         settings_layout.addRow("Graphics:", self.aa_btn)
+        
+        self.show_indices_btn = QPushButton("Miller Indices: OFF")
+        self.show_indices_btn.setCheckable(True)
+        self.show_indices_btn.clicked.connect(self.toggle_indices)
+        settings_layout.addRow("Sticks:", self.show_indices_btn)
         
         settings_group.setLayout(settings_layout)
         col2.addWidget(settings_group)
@@ -392,6 +400,13 @@ class XRDGui(QWidget):
         if self.model.set_wavelength(wav_text):
             self.refresh_plot()
 
+    def toggle_indices(self, checked):
+        if checked:
+            self.show_indices_btn.setText("Miller Indices: ON")
+        else:
+            self.show_indices_btn.setText("Miller Indices: OFF")
+        self.refresh_plot()
+
     def toggle_aa(self, checked):
         if checked:
             self.aa_btn.setText("Antialiasing: ON")
@@ -403,6 +418,8 @@ class XRDGui(QWidget):
         # Recreate the curve to apply antialiasing setting
         self.plot_widget.clear()
         self.plot_curve = self.plot_widget.plot(pen=pg.mkPen('cyan', width=2), antialias=is_aa)
+        self.sticks = self.plot_widget.plot(x=[], y=[], pen=pg.mkPen('r', width=1))
+        self.text_items.clear()
         self.refresh_plot()
 
     def on_param_changed(self):
@@ -426,8 +443,44 @@ class XRDGui(QWidget):
         else:
             self._calc_queued = True
             
-    def on_calc_finished(self, x, y):
+    def on_calc_finished(self, x, y, peaks):
         self.plot_curve.setData(x, y)
+        
+        if self.show_indices_btn.isChecked():
+            valid_peaks = [(pos, intensity, txt) for pos, intensity, txt in peaks 
+                           if self.model.two_theta_min <= pos <= self.model.two_theta_max]
+                           
+            sx = []
+            sy = []
+            max_int = 1.0
+            
+            for p in valid_peaks:
+                h = p[1] * 0.8
+                sx.extend([p[0], p[0], float('nan')])
+                sy.extend([0, h, float('nan')])
+                if h > max_int: max_int = h
+                
+            self.sticks.setData(x=sx, y=sy)
+            
+            # Remove old text
+            for t in self.text_items:
+                self.plot_widget.removeItem(t)
+            self.text_items.clear()
+            
+            # Add new text for significant peaks (e.g. > 2% of max to avoid clutter)
+            for pos, intensity, txt in valid_peaks:
+                scaled_intensity = intensity * 0.8
+                if txt and scaled_intensity > 0.02 * max_int:
+                    ti = pg.TextItem(text=txt, color='y', angle=-90, anchor=(0, 0.5))
+                    ti.setPos(pos, scaled_intensity)
+                    self.plot_widget.addItem(ti)
+                    self.text_items.append(ti)
+        else:
+            self.sticks.setData(x=[], y=[])
+            for t in self.text_items:
+                self.plot_widget.removeItem(t)
+            self.text_items.clear()
+            
         if self._calc_queued:
             self._calc_queued = False
             self.calc_thread.start()

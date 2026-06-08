@@ -297,9 +297,20 @@ class XRDModel:
                 
                 y[idx_start:idx_end] += weight * intensity * V
             
-        # Normalize to 100 for max peak
+        # scale y to max 100
         if len(y) > 0 and np.max(y) > 0:
             y = y / np.max(y) * 100.0
             
-        return x, y
-
+        # Collect stick pattern peaks
+        peaks_list = []
+        for calc, weight, pattern in self._cached_patterns:
+            for two_theta_0, intensity, hkls in zip(pattern.x, pattern.y, pattern.hkls):
+                if intensity > 0.5:
+                    hkl_text = ""
+                    # Only show Miller indices on the primary wavelength (weight 1.0)
+                    if weight == 1.0:
+                        hkl_strs = [str(h['hkl']).replace(" ", "") for h in hkls]
+                        hkl_text = "\n".join(hkl_strs)
+                    peaks_list.append((two_theta_0, intensity * weight, hkl_text))
+                        
+        return x, y, peaks_list
